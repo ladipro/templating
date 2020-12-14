@@ -1,7 +1,7 @@
 ﻿using System;
 using System.Collections.Generic;
 
-namespace Microsoft.TemplateEngine.Cli
+namespace Microsoft.TemplateEngine.Cli.HelpAndUsage
 {
     internal class InvalidParameterInfo
     {
