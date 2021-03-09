@@ -4,6 +4,7 @@
 #nullable enable
 
 using System;
+using System.Diagnostics;
 using System.Threading;
 using System.Threading.Tasks;
 
@@ -18,6 +19,7 @@ namespace Microsoft.TemplateEngine.Edge.Settings
     {
         private readonly TaskCompletionSource<IDisposable> _taskCompletionSource;
         private readonly ManualResetEvent _blockReleasingMutex = new ManualResetEvent(false);
+        private readonly ManualResetEvent _cancelRequestedEvent = new ManualResetEvent(false);
         private readonly string _mutexName;
         private readonly CancellationToken _token;
         private bool _disposed;
@@ -27,6 +29,8 @@ namespace Microsoft.TemplateEngine.Edge.Settings
             _mutexName = mutexName;
             _token = token;
             _taskCompletionSource = new TaskCompletionSource<IDisposable>();
+
+            _token.Register(() => _cancelRequestedEvent.Set());
 
             var thread = new Thread(new ThreadStart(WaitLoop));
             thread.IsBackground = true;
@@ -43,27 +47,18 @@ namespace Microsoft.TemplateEngine.Edge.Settings
         private void WaitLoop()
         {
             var mutex = new Mutex(false, _mutexName);
-            while (true)
+
+            int signaledHandle = WaitHandle.WaitAny(new WaitHandle[] { mutex, _cancelRequestedEvent });
+            if (signaledHandle == 1)
             {
-                if (_token.IsCancellationRequested)
-                {
-                    _taskCompletionSource.SetCanceled();
-                    _blockReleasingMutex.Dispose();
-                    return;
-                }
-                if (mutex.WaitOne(100))
-                {
-                    //Check if we were cancalled while waiting for mutex...
-                    if (_token.IsCancellationRequested)
-                    {
-                        mutex.ReleaseMutex();
-                        _taskCompletionSource.SetCanceled();
-                        _blockReleasingMutex.Dispose();
-                        return;
-                    }
-                    break;
-                }
+                Debug.Assert(_token.IsCancellationRequested);
+                mutex.ReleaseMutex();
+                _taskCompletionSource.SetCanceled();
+                _blockReleasingMutex.Dispose();
+                return;
             }
+            Debug.Assert(signaledHandle == 0);
+
             _taskCompletionSource.SetResult(this);
             _blockReleasingMutex.WaitOne();
             _blockReleasingMutex.Dispose();
